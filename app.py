@@ -20,11 +20,10 @@ def cargar_datos():
     except FileNotFoundError:
         return None
 
-# --- 2. CARGA DE COORDENADAS DISTRITALES (NUEVO) ---
+# --- 2. CARGA DE COORDENADAS DISTRITALES ---
 @st.cache_data
 def cargar_coords_distritos():
     try:
-        # Intenta cargar el archivo generado en el Paso 1
         df_coords = pd.read_csv("coords_distritos.csv")
         return df_coords
     except FileNotFoundError:
@@ -66,10 +65,8 @@ if dist:
 
 # Otros filtros
 if 'NIVEL_EDUCATIVO' in df.columns: 
-    # Ajusta 'NIVEL_EDUCATIVO' al nombre real de tu columna de nivel
     col_nivel = 'NIVEL_EDUCATIVO'
 else:
-    # Búsqueda fallback
     col_nivel = [c for c in df.columns if 'NIVEL' in c][0]
 
 nivel = st.sidebar.multiselect("Nivel", sorted(df[col_nivel].astype(str).unique()))
@@ -82,7 +79,6 @@ if 'TIPO_VACANTE' in df.columns:
         df = df[df['TIPO_VACANTE'].isin(tipo)]
 
 # --- 4. DICCIONARIO DE PROVINCIAS (BACKUP) ---
-# Se mantiene por si falla el archivo de distritos o para la vista provincial
 coords_provincias = {
     'LIMA': [-12.0464, -77.0428], 'CALLAO': [-12.0508, -77.1260], 'AREQUIPA': [-16.3989, -71.5350],
     'TRUJILLO': [-8.1160, -79.0300], 'CHICLAYO': [-6.7714, -79.8409], 'PIURA': [-5.1945, -80.6328],
@@ -159,7 +155,6 @@ with tab1:
     df_mapa_final = pd.DataFrame() # Contenedor vacío
     
     if nivel_mapa == "Provincia":
-        # Lógica Original (Provincia)
         df_mapa = df['PROVINCIA'].value_counts().reset_index()
         df_mapa.columns = ['PROVINCIA', 'VACANTES']
         
@@ -173,18 +168,13 @@ with tab1:
         df_mapa_final = df_mapa.dropna(subset=['LAT'])
         
     else:
-        # Lógica Nueva (Distrito)
         if df_coords_dist is not None:
-            # 1. Agrupar por distrito y provincia
             df_mapa = df.groupby(['PROVINCIA', 'DISTRITO']).size().reset_index(name='VACANTES')
-            # 2. Unir con las coordenadas cargadas
             df_mapa_final = pd.merge(df_mapa, df_coords_dist, on=['PROVINCIA', 'DISTRITO'], how='left')
-            # 3. Renombrar columnas para que coincidan con el mapa
             df_mapa_final.rename(columns={'LAT_DIST': 'LAT', 'LON_DIST': 'LON'}, inplace=True)
             df_mapa_final = df_mapa_final.dropna(subset=['LAT'])
         else:
-            st.warning("⚠️ Para ver el mapa por distritos, primero debes generar el archivo 'coords_distritos.csv' con el script proporcionado. Mostrando vista provincial por defecto.")
-            # Fallback a provincia si no hay archivo
+            st.warning("⚠️ Para ver el mapa por distritos, primero debes generar el archivo 'coords_distritos.csv'. Mostrando vista provincial.")
             nivel_mapa = "Provincia"
             df_mapa = df['PROVINCIA'].value_counts().reset_index()
             df_mapa.columns = ['PROVINCIA', 'VACANTES']
@@ -193,21 +183,15 @@ with tab1:
             df_mapa[['LAT', 'LON']] = df_mapa['PROVINCIA'].apply(get_lat_lon)
             df_mapa_final = df_mapa.dropna(subset=['LAT'])
 
-    # Graficar
+    # Graficar Mapa
     if not df_mapa_final.empty:
-        # Ajustamos el radio dependiendo del nivel de detalle
         radio_punto = 25 if nivel_mapa == "Provincia" else 12
-        
         fig_map = px.density_mapbox(
             df_mapa_final,
-            lat='LAT',
-            lon='LON',
-            z='VACANTES',
+            lat='LAT', lon='LON', z='VACANTES',
             radius=radio_punto,
-            center=dict(lat=-9.5, lon=-75.0),
-            zoom=4.5,
-            mapbox_style="carto-positron",
-            color_continuous_scale="Viridis",
+            center=dict(lat=-9.5, lon=-75.0), zoom=4.5,
+            mapbox_style="carto-positron", color_continuous_scale="Viridis",
             hover_name="DISTRITO" if nivel_mapa == "Distrito" else "PROVINCIA",
             title=f"Vacantes por {nivel_mapa}"
         )
@@ -218,22 +202,45 @@ with tab1:
 
     st.markdown("---")
 
-    # --- OTROS GRÁFICOS (Igual que antes) ---
-    col1, col2 = st.columns(2)
-    with col1:
+    # --- NUEVA SECCIÓN DE GRÁFICOS (CON LA DONA AGREGADA) ---
+    # Usamos 3 columnas para integrar la Dona sin romper el layout
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.subheader("🍩 Tipo de Vacante")
+        if 'TIPO_VACANTE' in df.columns:
+            # Datos para la dona
+            df_tipo = df['TIPO_VACANTE'].value_counts().reset_index()
+            df_tipo.columns = ['TIPO', 'CANTIDAD']
+            
+            # Gráfico de dona
+            fig_dona = px.pie(
+                df_tipo, 
+                values='CANTIDAD', 
+                names='TIPO', 
+                hole=0.4, # Hace que sea dona y no pastel
+                color_discrete_sequence=px.colors.qualitative.Set2
+            )
+            # Leyenda abajo para ahorrar espacio lateral
+            fig_dona.update_layout(legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
+            st.plotly_chart(fig_dona, use_container_width=True)
+        else:
+            st.info("Columna 'TIPO_VACANTE' no encontrada.")
+
+    with c2:
+        st.subheader("📍 Top Distritos")
+        df_dist = df['DISTRITO'].value_counts().head(10).reset_index()
+        df_dist.columns = ['DISTRITO', 'CANTIDAD']
+        fig_d = px.bar(df_dist, x='DISTRITO', y='CANTIDAD', color='DISTRITO')
+        st.plotly_chart(fig_d, use_container_width=True)
+
+    with c3:
         st.subheader("🏫 Top Colegios")
-        df_colegios = df[col_nombre].value_counts().head(15).reset_index()
+        df_colegios = df[col_nombre].value_counts().head(10).reset_index()
         df_colegios.columns = ['COLEGIO', 'CANTIDAD']
         fig_col = px.bar(df_colegios, x='COLEGIO', y='CANTIDAD', color='CANTIDAD', color_continuous_scale='Viridis')
         fig_col.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig_col, use_container_width=True)
-
-    with col2:
-        st.subheader("📍 Top Distritos")
-        df_dist = df['DISTRITO'].value_counts().head(15).reset_index()
-        df_dist.columns = ['DISTRITO', 'CANTIDAD']
-        fig_d = px.bar(df_dist, x='DISTRITO', y='CANTIDAD', color='DISTRITO')
-        st.plotly_chart(fig_d, use_container_width=True)
 
 with tab2:
     st.subheader("Listado Detallado")
